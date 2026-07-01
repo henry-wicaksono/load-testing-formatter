@@ -4,6 +4,8 @@
 import json
 import os
 import re
+import subprocess
+import tempfile
 import urllib.parse
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -684,7 +686,7 @@ tr.hidden { display: none; }
 <div class="toolbar">
   <input class="search-box" id="search" type="text" placeholder="Filter by operation or description…" autofocus disabled>
   <span class="stats" id="stats"></span>
-  <button class="export-btn" id="export-btn" onclick="exportSVG()" title="Export table as HTML">Export HTML</button>
+  <button class="export-btn" id="export-btn" onclick="exportPNG()" title="Export table as PNG">Export PNG</button>
 </div>
 
 <div class="table-wrap" id="table-wrap">
@@ -1114,20 +1116,18 @@ function renderTraceView(spans, totalMs) {
 
 // ── Export ────────────────────────────────────────────────────────
 
-function exportSVG() {
+function exportPNG() {
   if (CURRENT_VIEW !== 'table') { alert('Export is only available in Table view.'); return; }
   if (!SPANS.length) return;
 
   const table = document.getElementById('trace-table');
   if (!table || table.style.display === 'none') return;
 
-  // Clone the table and its children
+  // Clone the table and inline computed styles so Chrome can rasterize it reliably.
   const clone = table.cloneNode(true);
-
-  // Inline computed styles on every element so the SVG is self-contained
-  var srcList = table.querySelectorAll('*');
-  var dstList = clone.querySelectorAll('*');
-  var props = [
+  const srcList = table.querySelectorAll('*');
+  const dstList = clone.querySelectorAll('*');
+  const props = [
     'background','background-color','background-clip','color','font-family',
     'font-size','font-weight','border-bottom','border-right','border-top',
     'border-left','border-collapse','padding','text-align','vertical-align',
@@ -1136,34 +1136,35 @@ function exportSVG() {
     'flex','flex-shrink','flex-grow','align-items','justify-content',
     'letter-spacing','text-transform','border-radius','cursor','user-select',
     'border-bottom-color','border-bottom-style','border-bottom-width',
-    'border-right-color','border-right-style','border-right-width'
+    'border-right-color','border-right-style','border-right-width',
+    'box-sizing','outline','opacity'
   ];
   function copyStyles(src, dst) {
-    var cs = getComputedStyle(src);
-    for (var p = 0; p < props.length; p++) {
+    const cs = getComputedStyle(src);
+    for (let p = 0; p < props.length; p++) {
       dst.style[props[p]] = cs[props[p]];
     }
   }
   copyStyles(table, clone);
-  for (var i = 0; i < srcList.length; i++) {
-    copyStyles(srcList[i], dstList[i]);
-  }
+  for (let i = 0; i < srcList.length; i++) copyStyles(srcList[i], dstList[i]);
 
-  // Serialize the cloned table to HTML and wrap in a standalone document
-  var html = new XMLSerializer().serializeToString(clone);
-  var doctype = '<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml">\n<head>\n';
-  doctype += '<meta charset="UTF-8">\n';
-  doctype += '<style>body{margin:0;padding:0;background:#0d1117}</style>\n';
-  doctype += '</head>\n<body>\n';
-  doctype += html;
-  doctype += '\n</body>\n</html>';
+  const html = new XMLSerializer().serializeToString(clone);
+  const doc = '<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml">\n<head>\n'
+    + '<meta charset="UTF-8">\n'
+    + '<style>html,body{margin:0;padding:0;background:#0d1117;overflow:hidden}</style>\n'
+    + '</head>\n<body>\n'
+    + html
+    + '\n</body>\n</html>';
 
-  // Determine file name — use .html extension
-  var currentFile = document.getElementById('file-picker').value || 'trace';
-  fetch('/api/export-svg', {
+  const rect = table.getBoundingClientRect();
+  const width = Math.max(1, Math.ceil(rect.width));
+  const height = Math.max(1, Math.ceil(rect.height));
+  const currentFile = document.getElementById('file-picker').value || 'trace';
+
+  fetch('/api/export-image', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({svg: doctype, file: currentFile, ext: 'html'})
+    body: JSON.stringify({html: doc, file: currentFile, width: width, height: height})
   }).then(function(r) { return r.json(); }).then(function(data) {
     if (data.ok) {
       alert('Saved to ' + data.path);
@@ -1174,6 +1175,7 @@ function exportSVG() {
     alert('Export failed: ' + err.message);
   });
 }
+
 
 // ── Visibility ─────────────────────────────────────────────────────
 
@@ -1289,22 +1291,46 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({'ok': True, 'colors': saved})
             except (json.JSONDecodeError, ValueError) as e:
                 self._send_json({'error': str(e)}, 400)
-        elif parsed.path == '/api/export-svg':
+        elif parsed.path == '/api/export-image':
             length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(length)
             try:
                 data = json.loads(body)
-                svg_content = data.get('svg', '')
+                html_content = data.get('html', '')
                 file_name = data.get('file', 'trace')
-                ext = data.get('ext', 'svg')
+                width = int(data.get('width', 1200))
+                height = int(data.get('height', 1600))
                 stem = Path(file_name).stem
                 ts = datetime.now().strftime('%Y%m%dT%H%M%S')
                 SVG_DIR.mkdir(parents=True, exist_ok=True)
-                out_path = SVG_DIR / f'{stem}-{ts}.{ext}'
-                out_path.write_text(svg_content, encoding='utf-8')
+                out_path = SVG_DIR / f'{stem}-{ts}.png'
+                with tempfile.NamedTemporaryFile('w', delete=False, suffix='.html', encoding='utf-8') as tmp:
+                    tmp.write(html_content)
+                    tmp_path = tmp.name
+                try:
+                    chrome = '/usr/bin/google-chrome'
+                    cmd = [
+                        chrome,
+                        '--headless',
+                        '--no-sandbox',
+                        '--disable-gpu',
+                        f'--screenshot={out_path}',
+                        f'--window-size={width},{height}',
+                        f'file://{tmp_path}',
+                    ]
+                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                    if proc.returncode != 0:
+                        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or f'chrome exited {proc.returncode}')
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
                 self._send_json({'ok': True, 'path': str(out_path)})
-            except (json.JSONDecodeError, OSError) as e:
+            except (json.JSONDecodeError, OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as e:
                 self._send_json({'error': str(e)}, 400)
+        elif parsed.path == '/api/export-svg':
+            self._send_json({'error': 'deprecated'}, 410)
         else:
             self._send_json({'error': 'not found'}, 404)
 
