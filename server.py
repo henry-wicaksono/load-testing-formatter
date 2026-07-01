@@ -11,6 +11,37 @@ from pathlib import Path
 HERE = Path(__file__).parent
 SENTRY_DIR = HERE / 'sentry'
 PORT = 8765
+COLORS_FILE = HERE / 'table-colors.json'
+
+DEFAULT_COLORS = {
+    '0': '#0d1117',
+    '1': '#141b26',
+    '2': '#1c2534',
+    '3': '#242f42',
+    '4': '#2c3950',
+    '5': '#34435e',
+    '6': '#3c4d6c',
+    '7': '#44577a',
+    '8': '#4c6188',
+}
+
+
+def load_colors():
+    """Load saved table colors or return defaults."""
+    if COLORS_FILE.exists():
+        try:
+            data = json.loads(COLORS_FILE.read_text())
+            return {**DEFAULT_COLORS, **data}
+        except (json.JSONDecodeError, OSError):
+            pass
+    return dict(DEFAULT_COLORS)
+
+
+def save_colors(colors):
+    """Persist table colors to disk."""
+    merged = {**DEFAULT_COLORS, **colors}
+    COLORS_FILE.write_text(json.dumps(merged, indent=2))
+    return merged
 
 
 # ── data processing ──────────────────────────────────────────────────────
@@ -445,8 +476,8 @@ tr.hidden { display: none; }
 .dur-text.very-fast { color: #6e7681; }
 
 .table-view {
-  width: 100%;
   table-layout: fixed;
+  max-width: none;
 }
 .table-view th,
 .table-view td {
@@ -492,20 +523,38 @@ tr.hidden { display: none; }
   white-space: nowrap;
   margin-top: 2px;
 }
-/* Depth-based row backgrounds for visual hierarchy — noticeably distinct */
-.table-view tbody tr[data-depth="0"] td { background: #0d1117; }
-.table-view tbody tr[data-depth="1"] td { background: #141b26; }
-.table-view tbody tr[data-depth="2"] td { background: #1c2534; }
-.table-view tbody tr[data-depth="3"] td { background: #242f42; }
-.table-view tbody tr[data-depth="4"] td { background: #2c3950; }
-.table-view tbody tr[data-depth="5"] td { background: #34435e; }
-.table-view tbody tr[data-depth="6"] td { background: #3c4d6c; }
-.table-view tbody tr[data-depth="7"] td { background: #44577a; }
-.table-view tbody tr[data-depth="8"] td { background: #4c6188; }
-/* Ensure background fills the whole cell including padding */
-.table-view tbody td { background-clip: border-box; }
+/* Depth-based row backgrounds — applied dynamically via JS (table-colors.json) */
 /* Hover override stays strongest */
 .table-view tbody tr:hover td { background: #1c2128 !important; }
+
+/* Color pickers in sidebar */
+.color-swatches { display: flex; flex-direction: column; gap: 4px; }
+.color-swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.color-swatch-row label {
+  font-size: 12px;
+  color: #8b949e;
+  min-width: 14px;
+  text-align: right;
+  margin: 0;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.color-swatch-row input[type=color] {
+  width: 28px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+.color-swatch-row input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+.color-swatch-row input[type=color]::-webkit-color-swatch { border: none; border-radius: 3px; }
 
 
 /* Empty state */
@@ -572,6 +621,10 @@ tr.hidden { display: none; }
     <label>Depth</label>
     <input type="number" id="depth-input" value="3" min="1" max="9" onchange="setDepth(this.value)">
   </div>
+  <div class="sidebar-section" id="color-section" style="display:none">
+    <label>Level Colors</label>
+    <div id="color-pickers"></div>
+  </div>
 </div>
 
 <div class="main">
@@ -614,8 +667,66 @@ let TOTAL_MS = 0;
 let CURRENT_MODE = 'full';
 let CURRENT_VIEW = 'trace';
 let CURRENT_DEPTH = 3;
+let TABLE_COLORS = {}; // loaded from server
 
-// ── Mode toggle ──────────────────────────────────────────────────
+// ── Color management ──────────────────────────────────────────────
+
+async function loadColors() {
+  try {
+    const res = await fetch('/api/colors');
+    TABLE_COLORS = await res.json();
+    buildColorPickers();
+    applyColorStyle();
+  } catch (_) {
+    // fallback to defaults
+    TABLE_COLORS = {
+      '0': '#0d1117','1':'#141b26','2':'#1c2534','3':'#242f42','4':'#2c3950',
+      '5':'#34435e','6':'#3c4d6c','7':'#44577a','8':'#4c6188'
+    };
+  }
+}
+
+function buildColorPickers() {
+  const container = document.getElementById('color-pickers');
+  container.innerHTML = '<div class="color-swatches">';
+  for (let d = 0; d <= 8; d++) {
+    const color = TABLE_COLORS[String(d)] || TABLE_COLORS[d];
+    container.innerHTML +=
+      '<div class="color-swatch-row">' +
+      '<label>' + d + '</label>' +
+      '<input type="color" value="' + color + '" data-depth="' + d +
+      '" onchange="changeColor(' + d + ', this.value)">' +
+      '</div>';
+  }
+  container.innerHTML += '</div>';
+}
+
+function changeColor(level, color) {
+  TABLE_COLORS[String(level)] = color;
+  applyColorStyle();
+  if (CURRENT_VIEW === 'table') doRender();
+  // persist to server
+  fetch('/api/colors', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(TABLE_COLORS)
+  }).catch(function(){});
+}
+
+function applyColorStyle() {
+  let style = document.getElementById('depth-color-style');
+  if (!style) {
+    style = document.createElement('style');
+    style.id = 'depth-color-style';
+    document.head.appendChild(style);
+  }
+  let css = '';
+  for (let d = 0; d <= 8; d++) {
+    const c = TABLE_COLORS[String(d)];
+    if (c) css += '.table-view tbody tr[data-depth="' + d + '"] td { background: ' + c + '; }\n';
+  }
+  style.textContent = css;
+}
 
 function setMode(mode) {
   CURRENT_MODE = mode;
@@ -635,6 +746,7 @@ function setView(view) {
     el.classList.toggle('active', el.dataset.view === view);
   });
   document.getElementById('depth-section').style.display = view === 'table' ? '' : 'none';
+  document.getElementById('color-section').style.display = view === 'table' ? '' : 'none';
   document.getElementById('search').disabled = view === 'table';
   if (view === 'table') {
     document.getElementById('search').value = '';
@@ -766,6 +878,7 @@ function renderTableView(spans, totalMs, maxDepth) {
 
   const table = document.getElementById('trace-table');
   table.className = 'table-view';
+  table.style.width = (460 + maxDepth * 120) + 'px';
 
   const theadRow = table.querySelector('thead tr');
   theadRow.innerHTML = '<th class="name-th" style="width:460px">Item</th>';
@@ -859,6 +972,7 @@ function renderTraceView(spans, totalMs) {
   tbody.innerHTML = '';
   const table = document.getElementById('trace-table');
   table.className = '';
+  table.style.width = '';
   const colgroup = table.querySelector('colgroup');
   if (colgroup) colgroup.remove();
   document.querySelector('#trace-table thead tr').innerHTML =
@@ -1027,6 +1141,7 @@ document.addEventListener('keydown', function (e) {
 // ── Go ─────────────────────────────────────────────────────────────
 
 init();
+loadColors();
 // Initialize toggles
 setMode('full');
 setView('trace');
@@ -1046,8 +1161,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(self._list_files())
         elif parsed.path == '/api/trace':
             self._send_trace(parsed)
+        elif parsed.path == '/api/colors':
+            self._send_json(load_colors())
         else:
             self._send_html()
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == '/api/colors':
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length)
+            try:
+                colors = json.loads(body)
+                saved = save_colors(colors)
+                self._send_json({'ok': True, 'colors': saved})
+            except (json.JSONDecodeError, ValueError) as e:
+                self._send_json({'error': str(e)}, 400)
+        else:
+            self._send_json({'error': 'not found'}, 404)
 
     # ── helpers ──
 
