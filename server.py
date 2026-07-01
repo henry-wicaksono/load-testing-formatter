@@ -476,14 +476,14 @@ tr.hidden { display: none; }
   border-right: 1px solid #30363d;
 }
 .table-view td {
-  border-bottom: 2px solid #484f58;
+  border-bottom: 2px solid #6e7681;
 }
 .table-view th:last-child,
 .table-view td:last-child {
   border-right: none;
 }
 .table-view th {
-  border-bottom: 2px solid #484f58;
+  border-bottom: 2px solid #6e7681;
 }
 
 .table-view td.name-cell { padding: 6px 14px; max-width: 460px; overflow: hidden; }
@@ -907,10 +907,8 @@ function renderTableView(spans, totalMs, maxDepth) {
   table.style.width = (460 + maxDepth * 120) + 'px';
 
   const theadRow = table.querySelector('thead tr');
-  theadRow.innerHTML = '<th class="name-th" style="width:460px">Item</th>';
-  for (let d = maxDepth; d >= 1; d--) {
-    theadRow.innerHTML += '<th class="dur-th" style="width:120px">Duration (L' + d + ')</th>';
-  }
+  theadRow.innerHTML = '<th class="name-th" style="width:460px">Item</th>'
+    + '<th class="dur-th" colspan="' + maxDepth + '" style="width:' + (maxDepth * 120) + 'px">Duration</th>';
 
   // Remove colgroup if present — we use th widths exclusively
   const cg = table.querySelector('colgroup');
