@@ -445,7 +445,6 @@ tr.hidden { display: none; }
 .dur-text.very-fast { color: #6e7681; }
 
 .table-view {
-  width: 100%;
   table-layout: fixed;
 }
 .table-view th,
@@ -456,10 +455,7 @@ tr.hidden { display: none; }
 .table-view td:last-child {
   border-right: none;
 }
-.table-view td.name-cell {
-  display: table-cell;
-  padding: 6px 14px;
-}
+.table-view td.name-cell { padding: 6px 14px; max-width: 460px; overflow: hidden; }
 .table-view td.dur-cell {
   display: table-cell;
   text-align: right;
@@ -762,38 +758,60 @@ function renderTableView(spans, totalMs, maxDepth) {
   const table = document.getElementById('trace-table');
   table.className = 'table-view';
 
-  // Fixed columns so headers and cells stay aligned.
+  // Fixed columns: name col capped so durations stay compact
   let colgroup = table.querySelector('colgroup');
   if (!colgroup) {
     colgroup = document.createElement('colgroup');
     table.insertBefore(colgroup, table.firstChild);
   }
-  colgroup.innerHTML = '<col class="name-col" style="width: calc(100% - ' + (maxDepth * 120) + 'px)">' + Array.from({length: maxDepth}, () => '<col class="dur-col">').join('');
+  colgroup.innerHTML = '<col class="name-col" style="width:460px">'
+    + Array.from({length: maxDepth}, () => '<col class="dur-col">').join('');
 
   const theadRow = table.querySelector('thead tr');
   theadRow.innerHTML = '<th class="name-th">Item</th>';
-  for (let i = 1; i <= maxDepth; i++) {
-    theadRow.innerHTML += '<th class="dur-th">Duration (L' + i + ')</th>';
+  for (let d = maxDepth; d >= 1; d--) {
+    theadRow.innerHTML += '<th class="dur-th">Duration (L' + d + ')</th>';
   }
 
-  for (const row of filtered) {
+  // ── Compute rowspans (deepest → shallowest) ──
+  const spanMap = {};
+  for (let i = 0; i < filtered.length; i++) {
+    const row = filtered[i];
+    for (let di = maxDepth - 1; di >= 0; di--) {
+      const ancestor = row.ancestors.find(function(a) { return a.depth === di; });
+      const key = i + '_' + di;
+      if (!ancestor) { spanMap[key] = 1; continue; }
+      if (i > 0) {
+        const prev = filtered[i - 1].ancestors.find(function(a) { return a.depth === di; });
+        if (prev && prev.span.span_id === ancestor.span.span_id) { spanMap[key] = 0; continue; }
+      }
+      let span = 1;
+      for (let j = i + 1; j < filtered.length; j++) {
+        const next = filtered[j].ancestors.find(function(a) { return a.depth === di; });
+        if (next && next.span.span_id === ancestor.span.span_id) span++;
+        else break;
+      }
+      spanMap[key] = span;
+    }
+  }
+
+  // ── Render rows ──
+  for (let i = 0; i < filtered.length; i++) {
+    const row = filtered[i];
     const s = row.span;
     const ancestors = row.ancestors;
     const tr = document.createElement('tr');
 
     const nameTd = document.createElement('td');
     nameTd.className = 'name-cell';
-
     const nameWrap = document.createElement('div');
     nameWrap.className = 'name-wrap';
     nameWrap.style.paddingLeft = (s.depth * 20) + 'px';
-
     const nameMain = document.createElement('div');
     nameMain.className = 'name-main';
     nameMain.textContent = truncate(s.op, 60);
     nameMain.title = s.op;
     nameWrap.appendChild(nameMain);
-
     if (s.description && s.description !== s.op) {
       const desc = document.createElement('div');
       desc.className = 'name-desc';
@@ -801,14 +819,16 @@ function renderTableView(spans, totalMs, maxDepth) {
       desc.title = s.description;
       nameWrap.appendChild(desc);
     }
-
     nameTd.appendChild(nameWrap);
     tr.appendChild(nameTd);
 
-    for (let d = 0; d < maxDepth; d++) {
+    for (let di = maxDepth - 1; di >= 0; di--) {
+      const span = spanMap[i + '_' + di];
+      if (span === 0) continue;
       const durTd = document.createElement('td');
       durTd.className = 'dur-cell';
-      const ancestor = ancestors.find(function(a) { return a.depth === d; });
+      if (span > 1) durTd.setAttribute('rowspan', span);
+      const ancestor = ancestors.find(function(a) { return a.depth === di; });
       if (ancestor) {
         const dur = ancestor.span.duration_ms;
         durTd.textContent = fmtDur(dur);
