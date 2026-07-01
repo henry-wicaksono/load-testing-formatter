@@ -445,6 +445,7 @@ tr.hidden { display: none; }
 .dur-text.very-fast { color: #6e7681; }
 
 .table-view {
+  width: 100%;
   table-layout: fixed;
 }
 .table-view th,
@@ -475,8 +476,6 @@ tr.hidden { display: none; }
 .table-view td.dur-cell.fast { color: #3fb950; }
 .table-view td.dur-cell.very-fast { color: #6e7681; }
 .table-view td.dur-cell.dash { color: #30363d; }
-.table-view col.name-col { width: auto; }
-.table-view col.dur-col { width: 120px; }
 .table-view .name-wrap { min-width: 0; }
 .table-view .name-main {
   font-weight: 600;
@@ -493,22 +492,20 @@ tr.hidden { display: none; }
   white-space: nowrap;
   margin-top: 2px;
 }
-.table-view .depth-indent {
-  display: inline-block;
-  width: 0;
-}
-/* Depth-based row backgrounds for visual hierarchy */
+/* Depth-based row backgrounds for visual hierarchy — noticeably distinct */
 .table-view tbody tr[data-depth="0"] td { background: #0d1117; }
-.table-view tbody tr[data-depth="1"] td { background: #11161e; }
-.table-view tbody tr[data-depth="2"] td { background: #151b24; }
-.table-view tbody tr[data-depth="3"] td { background: #19212b; }
-.table-view tbody tr[data-depth="4"] td { background: #1d2631; }
-.table-view tbody tr[data-depth="5"] td { background: #212b37; }
-.table-view tbody tr[data-depth="6"] td { background: #25313d; }
-.table-view tbody tr[data-depth="7"] td { background: #293643; }
-.table-view tbody tr[data-depth="8"] td { background: #2d3b49; }
+.table-view tbody tr[data-depth="1"] td { background: #141b26; }
+.table-view tbody tr[data-depth="2"] td { background: #1c2534; }
+.table-view tbody tr[data-depth="3"] td { background: #242f42; }
+.table-view tbody tr[data-depth="4"] td { background: #2c3950; }
+.table-view tbody tr[data-depth="5"] td { background: #34435e; }
+.table-view tbody tr[data-depth="6"] td { background: #3c4d6c; }
+.table-view tbody tr[data-depth="7"] td { background: #44577a; }
+.table-view tbody tr[data-depth="8"] td { background: #4c6188; }
+/* Ensure background fills the whole cell including padding */
+.table-view tbody td { background-clip: border-box; }
 /* Hover override stays strongest */
-.table-view tbody tr:hover td { background: #1c2128; }
+.table-view tbody tr:hover td { background: #1c2128 !important; }
 
 
 /* Empty state */
@@ -770,20 +767,15 @@ function renderTableView(spans, totalMs, maxDepth) {
   const table = document.getElementById('trace-table');
   table.className = 'table-view';
 
-  // Fixed columns: name col capped so durations stay compact
-  let colgroup = table.querySelector('colgroup');
-  if (!colgroup) {
-    colgroup = document.createElement('colgroup');
-    table.insertBefore(colgroup, table.firstChild);
-  }
-  colgroup.innerHTML = '<col class="name-col" style="width:460px">'
-    + Array.from({length: maxDepth}, () => '<col class="dur-col">').join('');
-
   const theadRow = table.querySelector('thead tr');
-  theadRow.innerHTML = '<th class="name-th">Item</th>';
+  theadRow.innerHTML = '<th class="name-th" style="width:460px">Item</th>';
   for (let d = maxDepth; d >= 1; d--) {
-    theadRow.innerHTML += '<th class="dur-th">Duration (L' + d + ')</th>';
+    theadRow.innerHTML += '<th class="dur-th" style="width:120px">Duration (L' + d + ')</th>';
   }
+
+  // Remove colgroup if present — we use th widths exclusively
+  const cg = table.querySelector('colgroup');
+  if (cg) cg.remove();
 
   // ── Compute rowspans (deepest → shallowest) ──
   const spanMap = {};
@@ -817,6 +809,7 @@ function renderTableView(spans, totalMs, maxDepth) {
 
     const nameTd = document.createElement('td');
     nameTd.className = 'name-cell';
+    nameTd.style.width = '460px';
     const nameWrap = document.createElement('div');
     nameWrap.className = 'name-wrap';
     nameWrap.style.paddingLeft = (s.depth * 20) + 'px';
@@ -837,18 +830,20 @@ function renderTableView(spans, totalMs, maxDepth) {
 
     for (let di = maxDepth - 1; di >= 0; di--) {
       const span = spanMap[i + '_' + di];
-      if (span === 0) continue;
       const durTd = document.createElement('td');
       durTd.className = 'dur-cell';
+      durTd.style.width = '120px';
       if (span > 1) durTd.setAttribute('rowspan', span);
-      const ancestor = ancestors.find(function(a) { return a.depth === di; });
-      if (ancestor) {
-        const dur = ancestor.span.duration_ms;
-        durTd.textContent = fmtDur(dur);
-        durTd.classList.add(durClass(dur, totalMs));
-      } else {
-        durTd.textContent = '—';
-        durTd.classList.add('dash');
+      if (span > 0) {
+        const ancestor = ancestors.find(function(a) { return a.depth === di; });
+        if (ancestor) {
+          const dur = ancestor.span.duration_ms;
+          durTd.textContent = fmtDur(dur);
+          durTd.classList.add(durClass(dur, totalMs));
+        } else {
+          durTd.textContent = '—';
+          durTd.classList.add('dash');
+        }
       }
       tr.appendChild(durTd);
     }
