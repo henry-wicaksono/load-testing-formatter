@@ -5,6 +5,7 @@ import json
 import os
 import re
 import urllib.parse
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -12,6 +13,7 @@ HERE = Path(__file__).parent
 SENTRY_DIR = HERE / 'sentry'
 PORT = 8765
 COLORS_FILE = HERE / 'table-colors.json'
+SVG_DIR = HERE / 'svg'
 
 DEFAULT_COLORS = {
     'spread': 35,
@@ -1117,15 +1119,10 @@ function exportSVG() {
   if (!SPANS.length) return;
 
   const maxDepth = CURRENT_DEPTH;
-  const nameW = 460;
-  const durW = 120;
-  const colW = nameW + maxDepth * durW;
-  const rowH = 32;
-  const headerH = 36;
-  const padX = 14;
-  const padY = 6;
+  const nameW = 460, durW = 120, colW = nameW + maxDepth * durW;
+  const rowH = 32, headerH = 36, padX = 14;
 
-  // Filter spans and build ancestor stack (same as renderTableView)
+  // Filter and build ancestor stack (same as renderTableView)
   const filtered = [];
   const stack = [];
   for (const s of SPANS) {
@@ -1135,32 +1132,41 @@ function exportSVG() {
     filtered.push({span: s, ancestors: [...stack]});
   }
 
+  // Compute rowspans (same as renderTableView)
+  const spanMap = {};
+  for (let i = 0; i < filtered.length; i++) {
+    const row = filtered[i];
+    for (let di = maxDepth - 1; di >= 0; di--) {
+      const ancestor = row.ancestors.find(function(a) { return a.depth === di; });
+      const key = i + '_' + di;
+      if (!ancestor) { spanMap[key] = 1; continue; }
+      if (i > 0) {
+        const prev = filtered[i - 1].ancestors.find(function(a) { return a.depth === di; });
+        if (prev && prev.span.span_id === ancestor.span.span_id) { spanMap[key] = 0; continue; }
+      }
+      let span = 1;
+      for (let j = i + 1; j < filtered.length; j++) {
+        const next = filtered[j].ancestors.find(function(a) { return a.depth === di; });
+        if (next && next.span.span_id === ancestor.span.span_id) span++;
+        else break;
+      }
+      spanMap[key] = span;
+    }
+  }
+
   const totalH = headerH + filtered.length * rowH;
-  const nameColEnd = nameW;
-  const durColWidths = [];
-  for (let d = maxDepth - 1; d >= 0; d--) durColWidths.push(durW);
+
+  function escXml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
   let svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + colW + '" height="' + totalH + '">\n';
-  svg += '<defs><style>\n';
-  svg += '  text { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }\n';
-  svg += '</style></defs>\n';
+  svg += '<defs><style>\n  text { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }\n</style></defs>\n';
   svg += '<rect width="' + colW + '" height="' + totalH + '" fill="#0d1117"/>\n';
-
-  // Helper
-  function escXml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
   // Header
   svg += '<rect x="0" y="0" width="' + colW + '" height="' + headerH + '" fill="#1c2128"/>\n';
-  // header bottom border
   svg += '<line x1="0" y1="' + headerH + '" x2="' + colW + '" y2="' + headerH + '" stroke="#6e7681" stroke-width="2"/>\n';
-
-  // Name column header
   svg += '<text x="' + padX + '" y="' + (headerH / 2 + 4) + '" fill="#8b949e" font-size="11" font-weight="600">Item</text>\n';
-
-  // Duration column header (centered)
-  const durHeaderX = nameW + maxDepth * durW / 2;
-  svg += '<text x="' + durHeaderX + '" y="' + (headerH / 2 + 4) + '" fill="#8b949e" font-size="11" font-weight="600" text-anchor="middle">Duration</text>\n';
-  // vertical separators between dur cols in header
+  svg += '<text x="' + (nameW + maxDepth * durW / 2) + '" y="' + (headerH / 2 + 4) + '" fill="#8b949e" font-size="11" font-weight="600" text-anchor="middle">Duration</text>\n';
   let vx = nameW;
   for (let d = 0; d < maxDepth; d++) {
     svg += '<line x1="' + vx + '" y1="0" x2="' + vx + '" y2="' + headerH + '" stroke="#30363d" stroke-width="1"/>\n';
@@ -1174,56 +1180,55 @@ function exportSVG() {
     const y = headerH + i * rowH;
     const depth = s.depth;
 
-    // Background
     const bg = depthColor(depth, COLOR_SPREAD);
     svg += '<rect x="0" y="' + y + '" width="' + colW + '" height="' + rowH + '" fill="' + bg + '"/>\n';
-
-    // Bottom border per cell (so rowspan cells look correct)
     svg += '<line x1="0" y1="' + (y + rowH) + '" x2="' + colW + '" y2="' + (y + rowH) + '" stroke="#6e7681" stroke-width="2"/>\n';
 
-    // Column borders (vertical lines for each dur col)
+    // Column borders
     vx = nameW;
     for (let d = 0; d < maxDepth; d++) {
       svg += '<line x1="' + vx + '" y1="' + y + '" x2="' + vx + '" y2="' + (y + rowH) + '" stroke="#30363d" stroke-width="1"/>\n';
       vx += durW;
     }
 
-    // Item name (indented by depth, truncated)
+    // Item name
     const indent = depth * 20;
-    const maxTextW = nameW - padX - indent - 5;
     let label = s.op.length > 55 ? s.op.slice(0, 55) + '\u2026' : s.op;
-    if (s.description && s.description !== s.op) {
-      // Two-line: show op only (description would make rows variable height)
-      // Keep it single-line for consistent row height
-    }
     svg += '<text x="' + (padX + indent) + '" y="' + (y + rowH / 2 + 4) + '" fill="#e6edf3" font-size="13" font-weight="600">' + escXml(label) + '</text>\n';
 
-    // Duration columns (reversed order: L3..L1)
+    // Duration columns with rowspan
     for (let di = maxDepth - 1; di >= 0; di--) {
-      const ancestor = row.ancestors.find(function(a) { return a.depth === di; });
+      const span = spanMap[i + '_' + di];
       const durX = nameW + (maxDepth - 1 - di) * durW + durW - padX;
-      if (ancestor) {
-        const dur = ancestor.span.duration_ms;
-        const durStr = fmtDur(dur);
-        const cls = durClass(dur, TOTAL_MS);
-        const color = cls === 'slow' ? '#ff7b72' : cls === 'warn' ? '#d29922' : cls === 'fast' ? '#3fb950' : '#6e7681';
-        svg += '<text x="' + durX + '" y="' + (y + rowH / 2 + 4) + '" fill="' + color + '" font-size="12" font-weight="600" text-anchor="end" font-family="SFMono-Regular,Cascadia Code,Fira Code,monospace">' + escXml(durStr) + '</text>\n';
+      if (span > 0) {
+        const ancestor = row.ancestors.find(function(a) { return a.depth === di; });
+        if (ancestor) {
+          const dur = ancestor.span.duration_ms;
+          const durStr = fmtDur(dur);
+          const cls = durClass(dur, TOTAL_MS);
+          const color = cls === 'slow' ? '#ff7b72' : cls === 'warn' ? '#d29922' : cls === 'fast' ? '#3fb950' : '#6e7681';
+          svg += '<text x="' + durX + '" y="' + (y + rowH / 2 + 4) + '" fill="' + color + '" font-size="12" font-weight="600" text-anchor="end" font-family="SFMono-Regular,Cascadia Code,Fira Code,monospace">' + escXml(durStr) + '</text>\n';
+        }
       }
     }
   }
-
   svg += '</svg>';
 
-  // Trigger download
-  const blob = new Blob([svg], {type: 'image/svg+xml'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'trace.svg';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  // POST to server to save in svg/ folder
+  const currentFile = document.getElementById('file-picker').value || 'trace';
+  fetch('/api/export-svg', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({svg: svg, file: currentFile})
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    if (data.ok) {
+      alert('Saved to ' + data.path);
+    } else {
+      alert('Error: ' + (data.error || 'unknown'));
+    }
+  }).catch(function(err) {
+    alert('Export failed: ' + err.message);
+  });
 }
 
 // ── Visibility ─────────────────────────────────────────────────────
@@ -1339,6 +1344,21 @@ class Handler(BaseHTTPRequestHandler):
                 saved = save_colors(colors)
                 self._send_json({'ok': True, 'colors': saved})
             except (json.JSONDecodeError, ValueError) as e:
+                self._send_json({'error': str(e)}, 400)
+        elif parsed.path == '/api/export-svg':
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length)
+            try:
+                data = json.loads(body)
+                svg_content = data.get('svg', '')
+                file_name = data.get('file', 'trace')
+                stem = Path(file_name).stem
+                ts = datetime.now().strftime('%Y%m%dT%H%M%S')
+                SVG_DIR.mkdir(parents=True, exist_ok=True)
+                out_path = SVG_DIR / f'{stem}-{ts}.svg'
+                out_path.write_text(svg_content, encoding='utf-8')
+                self._send_json({'ok': True, 'path': str(out_path)})
+            except (json.JSONDecodeError, OSError) as e:
                 self._send_json({'error': str(e)}, 400)
         else:
             self._send_json({'error': 'not found'}, 404)
