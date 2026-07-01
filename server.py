@@ -258,6 +258,17 @@ body {
 }
 .sidebar-section .mode-opt:hover { background: #1c2128; color: #e6edf3; }
 .sidebar-section .mode-opt.active { background: #1f6f2e; color: #fff; }
+.sidebar-section input[type=number] {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #0d1117;
+  color: #e6edf3;
+  font-size: 13px;
+  outline: none;
+}
+.sidebar-section input[type=number]:focus { border-color: #58a6ff; }
 
 /* ── main content ── */
 .main {
@@ -433,6 +444,16 @@ tr.hidden { display: none; }
 .dur-text.fast { color: #3fb950; }
 .dur-text.very-fast { color: #6e7681; }
 
+/* Table view: flat table with depth columns */
+.table-view td.name-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 400px; }
+.table-view td.dur-cell { text-align: right; font-family: 'SFMono-Regular', 'Cascadia Code', 'Fira Code', monospace; font-size: 12px; font-weight: 600; white-space: nowrap; padding: 6px 14px; }
+.table-view td.dur-cell.slow { color: #ff7b72; }
+.table-view td.dur-cell.warn { color: #d29922; }
+.table-view td.dur-cell.fast { color: #3fb950; }
+.table-view td.dur-cell.very-fast { color: #6e7681; }
+.table-view td.dur-cell.dash { color: #30363d; }
+.table-view .desc-label { font-size: 11px; color: #6e7681; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* Empty state */
 .empty-state {
   text-align: center;
@@ -486,6 +507,17 @@ tr.hidden { display: none; }
       <span class="mode-opt" data-mode="ttft" onclick="setMode('ttft')">TTFT</span>
     </div>
   </div>
+  <div class="sidebar-section">
+    <label>View</label>
+    <div class="mode-wrap">
+      <span class="mode-opt" data-view="trace" onclick="setView('trace')">Trace</span>
+      <span class="mode-opt" data-view="table" onclick="setView('table')">Table</span>
+    </div>
+  </div>
+  <div class="sidebar-section" id="depth-section" style="display:none">
+    <label>Depth</label>
+    <input type="number" id="depth-input" value="3" min="1" max="9" onchange="setDepth(this.value)">
+  </div>
 </div>
 
 <div class="main">
@@ -524,17 +556,44 @@ tr.hidden { display: none; }
 // ── State ──────────────────────────────────────────────────────────
 
 let SPANS = [];
+let TOTAL_MS = 0;
 let CURRENT_MODE = 'full';
+let CURRENT_VIEW = 'trace';
+let CURRENT_DEPTH = 3;
 
 // ── Mode toggle ──────────────────────────────────────────────────
 
 function setMode(mode) {
   CURRENT_MODE = mode;
-  document.querySelectorAll('.mode-opt').forEach(function(el) {
+  document.querySelectorAll('[data-mode]').forEach(function(el) {
     el.classList.toggle('active', el.dataset.mode === mode);
   });
   if (document.getElementById('file-picker').value) {
     loadFile();
+  }
+}
+
+// ── View toggle ──────────────────────────────────────────────────
+
+function setView(view) {
+  CURRENT_VIEW = view;
+  document.querySelectorAll('[data-view]').forEach(function(el) {
+    el.classList.toggle('active', el.dataset.view === view);
+  });
+  document.getElementById('depth-section').style.display = view === 'table' ? '' : 'none';
+  document.getElementById('search').disabled = view === 'table';
+  if (view === 'table') {
+    document.getElementById('search').value = '';
+  }
+  if (SPANS.length > 0) {
+    doRender();
+  }
+}
+
+function setDepth(depth) {
+  CURRENT_DEPTH = parseInt(depth) || 3;
+  if (SPANS.length > 0 && CURRENT_VIEW === 'table') {
+    doRender();
   }
 }
 
@@ -576,7 +635,8 @@ async function loadFile() {
       (data.trace_id || '').slice(0, 16) + '…';
 
     SPANS = data.spans;
-    render(SPANS, data.duration_ms);
+    TOTAL_MS = data.duration_ms;
+    doRender();
 
     document.getElementById('trace-table').style.display = '';
     document.getElementById('loading').style.display = 'none';
@@ -624,9 +684,95 @@ function durBarColor(ms, total) {
 
 // ── Render ─────────────────────────────────────────────────────────
 
-function render(spans, totalMs) {
+function doRender() {
+  if (CURRENT_VIEW === 'table') {
+    renderTableView(SPANS, TOTAL_MS, CURRENT_DEPTH);
+  } else {
+    renderTraceView(SPANS, TOTAL_MS);
+  }
+}
+
+function renderTableView(spans, totalMs, maxDepth) {
   const tbody = document.getElementById('trace-body');
   tbody.innerHTML = '';
+
+  // Filter to maxDepth and build ancestor stack
+  const filtered = [];
+  const ancestorStack = []; // [{depth, span}]
+
+  for (const s of spans) {
+    if (s.depth >= maxDepth) continue;
+    while (ancestorStack.length > 0 && ancestorStack[ancestorStack.length - 1].depth >= s.depth) {
+      ancestorStack.pop();
+    }
+    ancestorStack.push({depth: s.depth, span: s});
+    filtered.push({span: s, ancestors: [...ancestorStack]});
+  }
+
+  // Mark the table with a class for styling
+  var table = document.getElementById('trace-table');
+  table.className = 'table-view';
+
+  // Rebuild thead
+  var thead = table.querySelector('thead tr');
+  thead.innerHTML = '<th class="name-th">Item</th>';
+  for (let i = 1; i <= maxDepth; i++) {
+    thead.innerHTML += '<th class="dur-th">Duration (L' + i + ')</th>';
+  }
+
+  for (const row of filtered) {
+    const s = row.span;
+    const ancestors = row.ancestors;
+    const tr = document.createElement('tr');
+
+    // Name cell: indent + op + optional description
+    const nameTd = document.createElement('td');
+    nameTd.className = 'name-cell';
+    nameTd.style.paddingLeft = (14 + s.depth * 20) + 'px';
+    const nameDiv = document.createElement('div');
+    nameDiv.style.fontWeight = '600';
+    nameDiv.style.color = '#e6edf3';
+    nameDiv.textContent = truncate(s.op, 60);
+    nameDiv.title = s.op;
+    nameTd.appendChild(nameDiv);
+
+    if (s.description && s.description !== s.op) {
+      const descSpan = document.createElement('div');
+      descSpan.className = 'desc-label';
+      descSpan.textContent = truncate(s.description, 60);
+      descSpan.title = s.description;
+      nameTd.appendChild(descSpan);
+    }
+    tr.appendChild(nameTd);
+
+    // Duration columns
+    for (let d = 0; d < maxDepth; d++) {
+      const durTd = document.createElement('td');
+      durTd.className = 'dur-cell';
+      const ancestor = ancestors.find(function(a) { return a.depth === d; });
+      if (ancestor) {
+        const dur = ancestor.span.duration_ms;
+        durTd.textContent = fmtDur(dur);
+        durTd.classList.add(durClass(dur, totalMs));
+      } else {
+        durTd.textContent = '—';
+        durTd.classList.add('dash');
+      }
+      tr.appendChild(durTd);
+    }
+
+    tbody.appendChild(tr);
+  }
+
+  updateStats();
+}
+
+function renderTraceView(spans, totalMs) {
+  const tbody = document.getElementById('trace-body');
+  tbody.innerHTML = '';
+  document.getElementById('trace-table').className = '';
+  document.querySelector('#trace-table thead tr').innerHTML =
+    '<th class="name-th">Name</th><th class="dur-th">Duration</th>';
 
   for (const s of spans) {
     const tr = document.createElement('tr');
@@ -729,7 +875,7 @@ function updateVisibility() {
 }
 
 function updateStats() {
-  var total = SPANS.length;
+  var total = document.querySelectorAll('#trace-body tr').length;
   var visible = document.querySelectorAll('#trace-body tr:not(.hidden)').length;
   document.getElementById('stats').textContent = visible + ' / ' + total + ' spans';
 }
@@ -791,8 +937,9 @@ document.addEventListener('keydown', function (e) {
 // ── Go ─────────────────────────────────────────────────────────────
 
 init();
-// Initialize mode
+// Initialize toggles
 setMode('full');
+setView('trace');
 </script>
 </body>
 </html>"""
