@@ -340,6 +340,19 @@ body {
 .search-box:focus { border-color: #58a6ff; }
 .search-box::placeholder { color: #6e7681; }
 .stats { font-size: 12px; color: #8b949e; white-space: nowrap; }
+.export-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #21262d;
+  color: #e6edf3;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.export-btn:hover { background: #30363d; }
 /* ── table ── */
 .table-wrap {
   flex: 1;
@@ -669,6 +682,7 @@ tr.hidden { display: none; }
 <div class="toolbar">
   <input class="search-box" id="search" type="text" placeholder="Filter by operation or description…" autofocus disabled>
   <span class="stats" id="stats"></span>
+  <button class="export-btn" id="export-btn" onclick="exportSVG()" title="Export table as SVG">Export SVG</button>
 </div>
 
 <div class="table-wrap" id="table-wrap">
@@ -1094,6 +1108,122 @@ function renderTraceView(spans, totalMs) {
   });
   updateVisibility();
   updateStats();
+}
+
+// ── Export ────────────────────────────────────────────────────────
+
+function exportSVG() {
+  if (CURRENT_VIEW !== 'table') { alert('Export is only available in Table view.'); return; }
+  if (!SPANS.length) return;
+
+  const maxDepth = CURRENT_DEPTH;
+  const nameW = 460;
+  const durW = 120;
+  const colW = nameW + maxDepth * durW;
+  const rowH = 32;
+  const headerH = 36;
+  const padX = 14;
+  const padY = 6;
+
+  // Filter spans and build ancestor stack (same as renderTableView)
+  const filtered = [];
+  const stack = [];
+  for (const s of SPANS) {
+    if (s.depth >= maxDepth) continue;
+    while (stack.length && stack[stack.length - 1].depth >= s.depth) stack.pop();
+    stack.push({depth: s.depth, span: s});
+    filtered.push({span: s, ancestors: [...stack]});
+  }
+
+  const totalH = headerH + filtered.length * rowH;
+  const nameColEnd = nameW;
+  const durColWidths = [];
+  for (let d = maxDepth - 1; d >= 0; d--) durColWidths.push(durW);
+
+  let svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + colW + '" height="' + totalH + '">\n';
+  svg += '<defs><style>\n';
+  svg += '  text { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }\n';
+  svg += '</style></defs>\n';
+  svg += '<rect width="' + colW + '" height="' + totalH + '" fill="#0d1117"/>\n';
+
+  // Helper
+  function escXml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  // Header
+  svg += '<rect x="0" y="0" width="' + colW + '" height="' + headerH + '" fill="#1c2128"/>\n';
+  // header bottom border
+  svg += '<line x1="0" y1="' + headerH + '" x2="' + colW + '" y2="' + headerH + '" stroke="#6e7681" stroke-width="2"/>\n';
+
+  // Name column header
+  svg += '<text x="' + padX + '" y="' + (headerH / 2 + 4) + '" fill="#8b949e" font-size="11" font-weight="600">Item</text>\n';
+
+  // Duration column header (centered)
+  const durHeaderX = nameW + maxDepth * durW / 2;
+  svg += '<text x="' + durHeaderX + '" y="' + (headerH / 2 + 4) + '" fill="#8b949e" font-size="11" font-weight="600" text-anchor="middle">Duration</text>\n';
+  // vertical separators between dur cols in header
+  let vx = nameW;
+  for (let d = 0; d < maxDepth; d++) {
+    svg += '<line x1="' + vx + '" y1="0" x2="' + vx + '" y2="' + headerH + '" stroke="#30363d" stroke-width="1"/>\n';
+    vx += durW;
+  }
+
+  // Rows
+  for (let i = 0; i < filtered.length; i++) {
+    const row = filtered[i];
+    const s = row.span;
+    const y = headerH + i * rowH;
+    const depth = s.depth;
+
+    // Background
+    const bg = depthColor(depth, COLOR_SPREAD);
+    svg += '<rect x="0" y="' + y + '" width="' + colW + '" height="' + rowH + '" fill="' + bg + '"/>\n';
+
+    // Bottom border per cell (so rowspan cells look correct)
+    svg += '<line x1="0" y1="' + (y + rowH) + '" x2="' + colW + '" y2="' + (y + rowH) + '" stroke="#6e7681" stroke-width="2"/>\n';
+
+    // Column borders (vertical lines for each dur col)
+    vx = nameW;
+    for (let d = 0; d < maxDepth; d++) {
+      svg += '<line x1="' + vx + '" y1="' + y + '" x2="' + vx + '" y2="' + (y + rowH) + '" stroke="#30363d" stroke-width="1"/>\n';
+      vx += durW;
+    }
+
+    // Item name (indented by depth, truncated)
+    const indent = depth * 20;
+    const maxTextW = nameW - padX - indent - 5;
+    let label = s.op.length > 55 ? s.op.slice(0, 55) + '\u2026' : s.op;
+    if (s.description && s.description !== s.op) {
+      // Two-line: show op only (description would make rows variable height)
+      // Keep it single-line for consistent row height
+    }
+    svg += '<text x="' + (padX + indent) + '" y="' + (y + rowH / 2 + 4) + '" fill="#e6edf3" font-size="13" font-weight="600">' + escXml(label) + '</text>\n';
+
+    // Duration columns (reversed order: L3..L1)
+    for (let di = maxDepth - 1; di >= 0; di--) {
+      const ancestor = row.ancestors.find(function(a) { return a.depth === di; });
+      const durX = nameW + (maxDepth - 1 - di) * durW + durW - padX;
+      if (ancestor) {
+        const dur = ancestor.span.duration_ms;
+        const durStr = fmtDur(dur);
+        const cls = durClass(dur, TOTAL_MS);
+        const color = cls === 'slow' ? '#ff7b72' : cls === 'warn' ? '#d29922' : cls === 'fast' ? '#3fb950' : '#6e7681';
+        svg += '<text x="' + durX + '" y="' + (y + rowH / 2 + 4) + '" fill="' + color + '" font-size="12" font-weight="600" text-anchor="end" font-family="SFMono-Regular,Cascadia Code,Fira Code,monospace">' + escXml(durStr) + '</text>\n';
+      }
+    }
+  }
+
+  svg += '</svg>';
+
+  // Trigger download
+  const blob = new Blob([svg], {type: 'image/svg+xml'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'trace.svg';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ── Visibility ─────────────────────────────────────────────────────
