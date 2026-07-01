@@ -479,9 +479,10 @@ tr.hidden { display: none; }
 .table-view td:last-child {
   border-right: none;
 }
-.table-view td.name-cell { padding: 6px 14px; max-width: 460px; overflow: hidden; }
+.table-view td.name-cell { padding: 6px 14px; max-width: 460px; overflow: hidden; vertical-align: top; }
 .table-view td.dur-cell {
   display: table-cell;
+  vertical-align: top;
   text-align: right;
   font-family: 'SFMono-Regular', 'Cascadia Code', 'Fira Code', monospace;
   font-size: 12px;
@@ -498,7 +499,6 @@ tr.hidden { display: none; }
 .table-view td.dur-cell.warn { color: #d29922; }
 .table-view td.dur-cell.fast { color: #3fb950; }
 .table-view td.dur-cell.very-fast { color: #6e7681; }
-.table-view td.dur-cell.dash { color: #30363d; }
 .table-view .name-wrap { min-width: 0; }
 .table-view .name-main {
   font-weight: 600;
@@ -974,8 +974,7 @@ function renderTableView(spans, totalMs, maxDepth) {
           durTd.textContent = fmtDur(dur);
           durTd.classList.add(durClass(dur, totalMs));
         } else {
-          durTd.textContent = '—';
-          durTd.classList.add('dash');
+          // empty cell — no dash
         }
       }
       tr.appendChild(durTd);
