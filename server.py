@@ -15,7 +15,7 @@ HERE = Path(__file__).parent
 SENTRY_DIR = HERE / 'sentry'
 PORT = 8765
 COLORS_FILE = HERE / 'table-colors.json'
-SVG_DIR = HERE / 'svg'
+SVG_DIR = HERE / 'results'
 
 DEFAULT_COLORS = {
     'spread': 35,
