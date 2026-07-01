@@ -475,14 +475,20 @@ tr.hidden { display: none; }
 .table-view td {
   border-right: 1px solid #30363d;
 }
+.table-view td {
+  border-bottom: 2px solid #484f58;
+}
 .table-view th:last-child,
 .table-view td:last-child {
   border-right: none;
 }
-.table-view td.name-cell { padding: 6px 14px; max-width: 460px; overflow: hidden; vertical-align: top; }
+.table-view th {
+  border-bottom: 2px solid #484f58;
+}
+
+.table-view td.name-cell { padding: 6px 14px; max-width: 460px; overflow: hidden; }
 .table-view td.dur-cell {
   display: table-cell;
-  vertical-align: top;
   text-align: right;
   font-family: 'SFMono-Regular', 'Cascadia Code', 'Fira Code', monospace;
   font-size: 12px;
