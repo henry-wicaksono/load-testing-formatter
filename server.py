@@ -1417,7 +1417,7 @@ class Handler(BaseHTTPRequestHandler):
 # ── entrypoint ──────────────────────────────────────────────────────────
 
 
-if __name__ == '__main__':
+def main():
     print(f"  ──────────────────────────────────────────")
     print(f"   Load Testing Formatter")
     print(f"   http://localhost:{PORT}")
@@ -1431,3 +1431,6 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("\n  Stopping…")
         server.shutdown()
+
+if __name__ == '__main__':
+    main()

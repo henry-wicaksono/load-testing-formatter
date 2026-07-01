@@ -1,3 +1,3 @@
 .PHONY: start
 start:
-	python3 server.py
+	uv run server.py
