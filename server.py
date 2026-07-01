@@ -444,15 +444,64 @@ tr.hidden { display: none; }
 .dur-text.fast { color: #3fb950; }
 .dur-text.very-fast { color: #6e7681; }
 
-/* Table view: flat table with depth columns */
-.table-view td.name-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 400px; }
-.table-view td.dur-cell { text-align: right; font-family: 'SFMono-Regular', 'Cascadia Code', 'Fira Code', monospace; font-size: 12px; font-weight: 600; white-space: nowrap; padding: 6px 14px; }
+.table-view {
+  width: 100%;
+  table-layout: fixed;
+}
+.table-view th,
+.table-view td {
+  border-right: 1px solid #30363d;
+}
+.table-view th:last-child,
+.table-view td:last-child {
+  border-right: none;
+}
+.table-view td.name-cell {
+  display: table-cell;
+  padding: 6px 14px;
+}
+.table-view td.dur-cell {
+  display: table-cell;
+  text-align: right;
+  font-family: 'SFMono-Regular', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 6px 14px;
+  width: 120px;
+  margin-left: 0;
+  flex: none;
+  justify-content: initial;
+  gap: 0;
+}
 .table-view td.dur-cell.slow { color: #ff7b72; }
 .table-view td.dur-cell.warn { color: #d29922; }
 .table-view td.dur-cell.fast { color: #3fb950; }
 .table-view td.dur-cell.very-fast { color: #6e7681; }
 .table-view td.dur-cell.dash { color: #30363d; }
-.table-view .desc-label { font-size: 11px; color: #6e7681; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-view col.name-col { width: auto; }
+.table-view col.dur-col { width: 120px; }
+.table-view .name-wrap { min-width: 0; }
+.table-view .name-main {
+  font-weight: 600;
+  color: #e6edf3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.table-view .name-desc {
+  font-size: 11px;
+  color: #6e7681;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.table-view .depth-indent {
+  display: inline-block;
+  width: 0;
+}
+
 
 /* Empty state */
 .empty-state {
@@ -636,9 +685,10 @@ async function loadFile() {
 
     SPANS = data.spans;
     TOTAL_MS = data.duration_ms;
-    doRender();
 
     document.getElementById('trace-table').style.display = '';
+    doRender();
+
     document.getElementById('loading').style.display = 'none';
     document.getElementById('search').disabled = false;
     document.getElementById('search').value = '';
@@ -709,15 +759,21 @@ function renderTableView(spans, totalMs, maxDepth) {
     filtered.push({span: s, ancestors: [...ancestorStack]});
   }
 
-  // Mark the table with a class for styling
-  var table = document.getElementById('trace-table');
+  const table = document.getElementById('trace-table');
   table.className = 'table-view';
 
-  // Rebuild thead
-  var thead = table.querySelector('thead tr');
-  thead.innerHTML = '<th class="name-th">Item</th>';
+  // Fixed columns so headers and cells stay aligned.
+  let colgroup = table.querySelector('colgroup');
+  if (!colgroup) {
+    colgroup = document.createElement('colgroup');
+    table.insertBefore(colgroup, table.firstChild);
+  }
+  colgroup.innerHTML = '<col class="name-col" style="width: calc(100% - ' + (maxDepth * 120) + 'px)">' + Array.from({length: maxDepth}, () => '<col class="dur-col">').join('');
+
+  const theadRow = table.querySelector('thead tr');
+  theadRow.innerHTML = '<th class="name-th">Item</th>';
   for (let i = 1; i <= maxDepth; i++) {
-    thead.innerHTML += '<th class="dur-th">Duration (L' + i + ')</th>';
+    theadRow.innerHTML += '<th class="dur-th">Duration (L' + i + ')</th>';
   }
 
   for (const row of filtered) {
@@ -725,27 +781,30 @@ function renderTableView(spans, totalMs, maxDepth) {
     const ancestors = row.ancestors;
     const tr = document.createElement('tr');
 
-    // Name cell: indent + op + optional description
     const nameTd = document.createElement('td');
     nameTd.className = 'name-cell';
-    nameTd.style.paddingLeft = (14 + s.depth * 20) + 'px';
-    const nameDiv = document.createElement('div');
-    nameDiv.style.fontWeight = '600';
-    nameDiv.style.color = '#e6edf3';
-    nameDiv.textContent = truncate(s.op, 60);
-    nameDiv.title = s.op;
-    nameTd.appendChild(nameDiv);
+
+    const nameWrap = document.createElement('div');
+    nameWrap.className = 'name-wrap';
+    nameWrap.style.paddingLeft = (s.depth * 20) + 'px';
+
+    const nameMain = document.createElement('div');
+    nameMain.className = 'name-main';
+    nameMain.textContent = truncate(s.op, 60);
+    nameMain.title = s.op;
+    nameWrap.appendChild(nameMain);
 
     if (s.description && s.description !== s.op) {
-      const descSpan = document.createElement('div');
-      descSpan.className = 'desc-label';
-      descSpan.textContent = truncate(s.description, 60);
-      descSpan.title = s.description;
-      nameTd.appendChild(descSpan);
+      const desc = document.createElement('div');
+      desc.className = 'name-desc';
+      desc.textContent = truncate(s.description, 60);
+      desc.title = s.description;
+      nameWrap.appendChild(desc);
     }
+
+    nameTd.appendChild(nameWrap);
     tr.appendChild(nameTd);
 
-    // Duration columns
     for (let d = 0; d < maxDepth; d++) {
       const durTd = document.createElement('td');
       durTd.className = 'dur-cell';
@@ -770,7 +829,10 @@ function renderTableView(spans, totalMs, maxDepth) {
 function renderTraceView(spans, totalMs) {
   const tbody = document.getElementById('trace-body');
   tbody.innerHTML = '';
-  document.getElementById('trace-table').className = '';
+  const table = document.getElementById('trace-table');
+  table.className = '';
+  const colgroup = table.querySelector('colgroup');
+  if (colgroup) colgroup.remove();
   document.querySelector('#trace-table thead tr').innerHTML =
     '<th class="name-th">Name</th><th class="dur-th">Duration</th>';
 
