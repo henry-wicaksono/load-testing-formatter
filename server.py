@@ -1118,104 +1118,53 @@ function exportSVG() {
   if (CURRENT_VIEW !== 'table') { alert('Export is only available in Table view.'); return; }
   if (!SPANS.length) return;
 
-  const maxDepth = CURRENT_DEPTH;
-  const nameW = 460, durW = 120, colW = nameW + maxDepth * durW;
-  const rowH = 32, headerH = 36, padX = 14;
+  const table = document.getElementById('trace-table');
+  if (!table || table.style.display === 'none') return;
 
-  // Filter and build ancestor stack (same as renderTableView)
-  const filtered = [];
-  const stack = [];
-  for (const s of SPANS) {
-    if (s.depth >= maxDepth) continue;
-    while (stack.length && stack[stack.length - 1].depth >= s.depth) stack.pop();
-    stack.push({depth: s.depth, span: s});
-    filtered.push({span: s, ancestors: [...stack]});
-  }
+  // Clone the table and its children
+  const clone = table.cloneNode(true);
 
-  // Compute rowspans (same as renderTableView)
-  const spanMap = {};
-  for (let i = 0; i < filtered.length; i++) {
-    const row = filtered[i];
-    for (let di = maxDepth - 1; di >= 0; di--) {
-      const ancestor = row.ancestors.find(function(a) { return a.depth === di; });
-      const key = i + '_' + di;
-      if (!ancestor) { spanMap[key] = 1; continue; }
-      if (i > 0) {
-        const prev = filtered[i - 1].ancestors.find(function(a) { return a.depth === di; });
-        if (prev && prev.span.span_id === ancestor.span.span_id) { spanMap[key] = 0; continue; }
-      }
-      let span = 1;
-      for (let j = i + 1; j < filtered.length; j++) {
-        const next = filtered[j].ancestors.find(function(a) { return a.depth === di; });
-        if (next && next.span.span_id === ancestor.span.span_id) span++;
-        else break;
-      }
-      spanMap[key] = span;
+  // Inline computed styles on every element so the SVG is self-contained
+  var srcList = table.querySelectorAll('*');
+  var dstList = clone.querySelectorAll('*');
+  var props = [
+    'background','background-color','background-clip','color','font-family',
+    'font-size','font-weight','border-bottom','border-right','border-top',
+    'border-left','border-collapse','padding','text-align','vertical-align',
+    'white-space','overflow','text-overflow','width','height','min-width',
+    'max-width','display','line-height','margin-left','margin-right','gap',
+    'flex','flex-shrink','flex-grow','align-items','justify-content',
+    'letter-spacing','text-transform','border-radius','cursor','user-select',
+    'border-bottom-color','border-bottom-style','border-bottom-width',
+    'border-right-color','border-right-style','border-right-width'
+  ];
+  function copyStyles(src, dst) {
+    var cs = getComputedStyle(src);
+    for (var p = 0; p < props.length; p++) {
+      dst.style[props[p]] = cs[props[p]];
     }
   }
-
-  const totalH = headerH + filtered.length * rowH;
-
-  function escXml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-  let svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + colW + '" height="' + totalH + '">\n';
-  svg += '<defs><style>\n  text { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }\n</style></defs>\n';
-  svg += '<rect width="' + colW + '" height="' + totalH + '" fill="#0d1117"/>\n';
-
-  // Header
-  svg += '<rect x="0" y="0" width="' + colW + '" height="' + headerH + '" fill="#1c2128"/>\n';
-  svg += '<line x1="0" y1="' + headerH + '" x2="' + colW + '" y2="' + headerH + '" stroke="#6e7681" stroke-width="2"/>\n';
-  svg += '<text x="' + padX + '" y="' + (headerH / 2 + 4) + '" fill="#8b949e" font-size="11" font-weight="600">Item</text>\n';
-  svg += '<text x="' + (nameW + maxDepth * durW / 2) + '" y="' + (headerH / 2 + 4) + '" fill="#8b949e" font-size="11" font-weight="600" text-anchor="middle">Duration</text>\n';
-  let vx = nameW;
-  for (let d = 0; d < maxDepth; d++) {
-    svg += '<line x1="' + vx + '" y1="0" x2="' + vx + '" y2="' + headerH + '" stroke="#30363d" stroke-width="1"/>\n';
-    vx += durW;
+  copyStyles(table, clone);
+  for (var i = 0; i < srcList.length; i++) {
+    copyStyles(srcList[i], dstList[i]);
   }
 
-  // Rows
-  for (let i = 0; i < filtered.length; i++) {
-    const row = filtered[i];
-    const s = row.span;
-    const y = headerH + i * rowH;
-    const depth = s.depth;
+  // Serialize the cloned table to HTML
+  var html = new XMLSerializer().serializeToString(clone);
 
-    const bg = depthColor(depth, COLOR_SPREAD);
-    svg += '<rect x="0" y="' + y + '" width="' + colW + '" height="' + rowH + '" fill="' + bg + '"/>\n';
-    svg += '<line x1="0" y1="' + (y + rowH) + '" x2="' + colW + '" y2="' + (y + rowH) + '" stroke="#6e7681" stroke-width="2"/>\n';
-
-    // Column borders
-    vx = nameW;
-    for (let d = 0; d < maxDepth; d++) {
-      svg += '<line x1="' + vx + '" y1="' + y + '" x2="' + vx + '" y2="' + (y + rowH) + '" stroke="#30363d" stroke-width="1"/>\n';
-      vx += durW;
-    }
-
-    // Item name
-    const indent = depth * 20;
-    let label = s.op.length > 55 ? s.op.slice(0, 55) + '\u2026' : s.op;
-    svg += '<text x="' + (padX + indent) + '" y="' + (y + rowH / 2 + 4) + '" fill="#e6edf3" font-size="13" font-weight="600">' + escXml(label) + '</text>\n';
-
-    // Duration columns with rowspan
-    for (let di = maxDepth - 1; di >= 0; di--) {
-      const span = spanMap[i + '_' + di];
-      const durX = nameW + (maxDepth - 1 - di) * durW + durW - padX;
-      if (span > 0) {
-        const ancestor = row.ancestors.find(function(a) { return a.depth === di; });
-        if (ancestor) {
-          const dur = ancestor.span.duration_ms;
-          const durStr = fmtDur(dur);
-          const cls = durClass(dur, TOTAL_MS);
-          const color = cls === 'slow' ? '#ff7b72' : cls === 'warn' ? '#d29922' : cls === 'fast' ? '#3fb950' : '#6e7681';
-          svg += '<text x="' + durX + '" y="' + (y + rowH / 2 + 4) + '" fill="' + color + '" font-size="12" font-weight="600" text-anchor="end" font-family="SFMono-Regular,Cascadia Code,Fira Code,monospace">' + escXml(durStr) + '</text>\n';
-        }
-      }
-    }
-  }
-  svg += '</svg>';
+  // Wrap in SVG with foreignObject
+  var rect = table.getBoundingClientRect();
+  var w = Math.ceil(rect.width);
+  var h = Math.ceil(rect.height);
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">\n';
+  svg += '<foreignObject width="' + w + '" height="' + h + '">\n';
+  svg += '<html xmlns="http://www.w3.org/1999/xhtml">\n';
+  svg += '<body style="margin:0;padding:0;background:#0d1117">\n';
+  svg += html;
+  svg += '\n</body>\n</html>\n</foreignObject>\n</svg>';
 
   // POST to server to save in svg/ folder
-  const currentFile = document.getElementById('file-picker').value || 'trace';
+  var currentFile = document.getElementById('file-picker').value || 'trace';
   fetch('/api/export-svg', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
