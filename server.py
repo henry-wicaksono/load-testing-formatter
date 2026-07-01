@@ -485,6 +485,9 @@ tr.hidden { display: none; }
 .table-view th {
   border-bottom: 2px solid #6e7681;
 }
+.table-view th.dur-th {
+  text-align: center;
+}
 
 .table-view td.name-cell { padding: 6px 14px; max-width: 460px; overflow: hidden; }
 .table-view td.dur-cell {
@@ -725,6 +728,7 @@ async function loadColors() {
   document.getElementById('spread-slider').value = COLOR_SPREAD;
   updateSwatches();
   applyColorStyle();
+  if (CURRENT_VIEW === 'table' && SPANS.length) doRender();
 }
 
 function setSpread(val) {
@@ -1166,8 +1170,8 @@ document.addEventListener('keydown', function (e) {
 init();
 loadColors();
 // Initialize toggles
-setMode('full');
-setView('trace');
+setMode('ttft');
+setView('table');
 </script>
 </body>
 </html>"""
