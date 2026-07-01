@@ -696,7 +696,8 @@ let TOTAL_MS = 0;
 let CURRENT_MODE = 'full';
 let CURRENT_VIEW = 'trace';
 let CURRENT_DEPTH = 3;
-let COLOR_SPREAD = 35; // 0=all dark, 100=maximum contrast
+let COLOR_SPREAD = 35;
+let _saveTimer = null;
 
 // ── Color management (single spread slider) ──────────────────────
 
@@ -737,11 +738,16 @@ function setSpread(val) {
   updateSwatches();
   applyColorStyle();
   if (CURRENT_VIEW === 'table') doRender();
-  fetch('/api/colors', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({spread: COLOR_SPREAD})
-  }).catch(function(){});
+  // debounce save to avoid flooding the server while dragging
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(function() {
+    fetch('/api/colors', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({spread: COLOR_SPREAD})
+    }).catch(function(){});
+    _saveTimer = null;
+  }, 300);
 }
 
 function applyColorStyle() {
