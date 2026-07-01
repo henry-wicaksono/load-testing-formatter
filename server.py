@@ -497,6 +497,18 @@ tr.hidden { display: none; }
   display: inline-block;
   width: 0;
 }
+/* Depth-based row backgrounds for visual hierarchy */
+.table-view tbody tr[data-depth="0"] td { background: #0d1117; }
+.table-view tbody tr[data-depth="1"] td { background: #11161e; }
+.table-view tbody tr[data-depth="2"] td { background: #151b24; }
+.table-view tbody tr[data-depth="3"] td { background: #19212b; }
+.table-view tbody tr[data-depth="4"] td { background: #1d2631; }
+.table-view tbody tr[data-depth="5"] td { background: #212b37; }
+.table-view tbody tr[data-depth="6"] td { background: #25313d; }
+.table-view tbody tr[data-depth="7"] td { background: #293643; }
+.table-view tbody tr[data-depth="8"] td { background: #2d3b49; }
+/* Hover override stays strongest */
+.table-view tbody tr:hover td { background: #1c2128; }
 
 
 /* Empty state */
@@ -801,6 +813,7 @@ function renderTableView(spans, totalMs, maxDepth) {
     const s = row.span;
     const ancestors = row.ancestors;
     const tr = document.createElement('tr');
+    tr.setAttribute('data-depth', s.depth);
 
     const nameTd = document.createElement('td');
     nameTd.className = 'name-cell';
