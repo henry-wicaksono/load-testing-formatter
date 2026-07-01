@@ -14,20 +14,12 @@ PORT = 8765
 COLORS_FILE = HERE / 'table-colors.json'
 
 DEFAULT_COLORS = {
-    '0': '#0d1117',
-    '1': '#141b26',
-    '2': '#1c2534',
-    '3': '#242f42',
-    '4': '#2c3950',
-    '5': '#34435e',
-    '6': '#3c4d6c',
-    '7': '#44577a',
-    '8': '#4c6188',
+    'spread': 35,
 }
 
 
 def load_colors():
-    """Load saved table colors or return defaults."""
+    """Load saved spread value or return default."""
     if COLORS_FILE.exists():
         try:
             data = json.loads(COLORS_FILE.read_text())
@@ -38,7 +30,7 @@ def load_colors():
 
 
 def save_colors(colors):
-    """Persist table colors to disk."""
+    """Persist spread value to disk."""
     merged = {**DEFAULT_COLORS, **colors}
     COLORS_FILE.write_text(json.dumps(merged, indent=2))
     return merged
@@ -527,34 +519,51 @@ tr.hidden { display: none; }
 /* Hover override stays strongest */
 .table-view tbody tr:hover td { background: #1c2128 !important; }
 
-/* Color pickers in sidebar */
-.color-swatches { display: flex; flex-direction: column; gap: 4px; }
-.color-swatch-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 0;
-}
-.color-swatch-row label {
-  font-size: 12px;
-  color: #8b949e;
-  min-width: 14px;
-  text-align: right;
-  margin: 0;
-  text-transform: none;
-  letter-spacing: 0;
-}
-.color-swatch-row input[type=color] {
-  width: 28px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid #30363d;
-  border-radius: 4px;
-  background: none;
+/* Spread slider + swatch preview */
+#spread-slider {
+  width: 100%;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #30363d;
+  border-radius: 3px;
+  outline: none;
   cursor: pointer;
 }
-.color-swatch-row input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
-.color-swatch-row input[type=color]::-webkit-color-swatch { border: none; border-radius: 3px; }
+#spread-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #58a6ff;
+  border: none;
+  cursor: pointer;
+}
+#spread-slider::-moz-range-thumb {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #58a6ff;
+  border: none;
+  cursor: pointer;
+}
+.spread-swatch-row {
+  display: flex;
+  gap: 2px;
+  margin-top: 6px;
+}
+.spread-swatch-row .swatch {
+  flex: 1;
+  height: 20px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.7);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+  border: 1px solid #30363d;
+}
 
 
 /* Empty state */
@@ -622,8 +631,19 @@ tr.hidden { display: none; }
     <input type="number" id="depth-input" value="3" min="1" max="9" onchange="setDepth(this.value)">
   </div>
   <div class="sidebar-section" id="color-section" style="display:none">
-    <label>Level Colors</label>
-    <div id="color-pickers"></div>
+    <label>Spread <span id="spread-label">35</span></label>
+    <input type="range" id="spread-slider" min="0" max="100" value="35" oninput="setSpread(this.value)">
+    <div class="spread-swatch-row">
+      <span class="swatch" data-d="0">0</span>
+      <span class="swatch" data-d="1">1</span>
+      <span class="swatch" data-d="2">2</span>
+      <span class="swatch" data-d="3">3</span>
+      <span class="swatch" data-d="4">4</span>
+      <span class="swatch" data-d="5">5</span>
+      <span class="swatch" data-d="6">6</span>
+      <span class="swatch" data-d="7">7</span>
+      <span class="swatch" data-d="8">8</span>
+    </div>
   </div>
 </div>
 
@@ -667,49 +687,50 @@ let TOTAL_MS = 0;
 let CURRENT_MODE = 'full';
 let CURRENT_VIEW = 'trace';
 let CURRENT_DEPTH = 3;
-let TABLE_COLORS = {}; // loaded from server
+let COLOR_SPREAD = 35; // 0=all dark, 100=maximum contrast
 
-// ── Color management ──────────────────────────────────────────────
+// ── Color management (single spread slider) ──────────────────────
+
+const BASE_RGB = [13, 17, 23]; // #0d1117 — page background
+
+function depthColor(level, spread) {
+  const ratio = spread / 100;
+  const t = (level / 8) * ratio;
+  const r = Math.round(BASE_RGB[0] + (255 - BASE_RGB[0]) * t);
+  const g = Math.round(BASE_RGB[1] + (255 - BASE_RGB[1]) * t);
+  const b = Math.round(BASE_RGB[2] + (255 - BASE_RGB[2]) * t);
+  return '#' + [r, g, b].map(function(c) { return c.toString(16).padStart(2, '0'); }).join('');
+}
+
+function updateSwatches() {
+  const swatches = document.querySelectorAll('.spread-swatch-row .swatch');
+  for (const el of swatches) {
+    const d = parseInt(el.dataset.d, 10);
+    el.style.background = depthColor(d, COLOR_SPREAD);
+  }
+}
 
 async function loadColors() {
   try {
     const res = await fetch('/api/colors');
-    TABLE_COLORS = await res.json();
-    buildColorPickers();
-    applyColorStyle();
-  } catch (_) {
-    // fallback to defaults
-    TABLE_COLORS = {
-      '0': '#0d1117','1':'#141b26','2':'#1c2534','3':'#242f42','4':'#2c3950',
-      '5':'#34435e','6':'#3c4d6c','7':'#44577a','8':'#4c6188'
-    };
-  }
+    const data = await res.json();
+    COLOR_SPREAD = data.spread !== undefined ? data.spread : 35;
+  } catch (_) { /* keep default */ }
+  document.getElementById('spread-slider').value = COLOR_SPREAD;
+  updateSwatches();
+  applyColorStyle();
 }
 
-function buildColorPickers() {
-  const container = document.getElementById('color-pickers');
-  container.innerHTML = '<div class="color-swatches">';
-  for (let d = 0; d <= 8; d++) {
-    const color = TABLE_COLORS[String(d)] || TABLE_COLORS[d];
-    container.innerHTML +=
-      '<div class="color-swatch-row">' +
-      '<label>' + d + '</label>' +
-      '<input type="color" value="' + color + '" data-depth="' + d +
-      '" onchange="changeColor(' + d + ', this.value)">' +
-      '</div>';
-  }
-  container.innerHTML += '</div>';
-}
-
-function changeColor(level, color) {
-  TABLE_COLORS[String(level)] = color;
+function setSpread(val) {
+  COLOR_SPREAD = parseInt(val, 10);
+  document.getElementById('spread-label').textContent = COLOR_SPREAD;
+  updateSwatches();
   applyColorStyle();
   if (CURRENT_VIEW === 'table') doRender();
-  // persist to server
   fetch('/api/colors', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(TABLE_COLORS)
+    body: JSON.stringify({spread: COLOR_SPREAD})
   }).catch(function(){});
 }
 
@@ -722,8 +743,7 @@ function applyColorStyle() {
   }
   let css = '';
   for (let d = 0; d <= 8; d++) {
-    const c = TABLE_COLORS[String(d)];
-    if (c) css += '.table-view tbody tr[data-depth="' + d + '"] td { background: ' + c + '; }\n';
+    css += '.table-view tbody tr[data-depth="' + d + '"] td { background: ' + depthColor(d, COLOR_SPREAD) + '; }\n';
   }
   style.textContent = css;
 }
