@@ -684,7 +684,7 @@ tr.hidden { display: none; }
 <div class="toolbar">
   <input class="search-box" id="search" type="text" placeholder="Filter by operation or description…" autofocus disabled>
   <span class="stats" id="stats"></span>
-  <button class="export-btn" id="export-btn" onclick="exportSVG()" title="Export table as SVG">Export SVG</button>
+  <button class="export-btn" id="export-btn" onclick="exportSVG()" title="Export table as HTML">Export HTML</button>
 </div>
 
 <div class="table-wrap" id="table-wrap">
@@ -1149,26 +1149,21 @@ function exportSVG() {
     copyStyles(srcList[i], dstList[i]);
   }
 
-  // Serialize the cloned table to HTML
+  // Serialize the cloned table to HTML and wrap in a standalone document
   var html = new XMLSerializer().serializeToString(clone);
+  var doctype = '<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml">\n<head>\n';
+  doctype += '<meta charset="UTF-8">\n';
+  doctype += '<style>body{margin:0;padding:0;background:#0d1117}</style>\n';
+  doctype += '</head>\n<body>\n';
+  doctype += html;
+  doctype += '\n</body>\n</html>';
 
-  // Wrap in SVG with foreignObject
-  var rect = table.getBoundingClientRect();
-  var w = Math.ceil(rect.width);
-  var h = Math.ceil(rect.height);
-  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">\n';
-  svg += '<foreignObject width="' + w + '" height="' + h + '">\n';
-  svg += '<html xmlns="http://www.w3.org/1999/xhtml">\n';
-  svg += '<body style="margin:0;padding:0;background:#0d1117">\n';
-  svg += html;
-  svg += '\n</body>\n</html>\n</foreignObject>\n</svg>';
-
-  // POST to server to save in svg/ folder
+  // Determine file name — use .html extension
   var currentFile = document.getElementById('file-picker').value || 'trace';
   fetch('/api/export-svg', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({svg: svg, file: currentFile})
+    body: JSON.stringify({svg: doctype, file: currentFile, ext: 'html'})
   }).then(function(r) { return r.json(); }).then(function(data) {
     if (data.ok) {
       alert('Saved to ' + data.path);
@@ -1301,10 +1296,11 @@ class Handler(BaseHTTPRequestHandler):
                 data = json.loads(body)
                 svg_content = data.get('svg', '')
                 file_name = data.get('file', 'trace')
+                ext = data.get('ext', 'svg')
                 stem = Path(file_name).stem
                 ts = datetime.now().strftime('%Y%m%dT%H%M%S')
                 SVG_DIR.mkdir(parents=True, exist_ok=True)
-                out_path = SVG_DIR / f'{stem}-{ts}.svg'
+                out_path = SVG_DIR / f'{stem}-{ts}.{ext}'
                 out_path.write_text(svg_content, encoding='utf-8')
                 self._send_json({'ok': True, 'path': str(out_path)})
             except (json.JSONDecodeError, OSError) as e:
