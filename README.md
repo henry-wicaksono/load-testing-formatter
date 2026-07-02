@@ -6,13 +6,16 @@ Browser-based trace table viewer for Sentry JSON exports. Pick a trace file, ins
 
 - Python ≥ 3.10
 - [uv](https://docs.astral.sh/uv/) (package manager, install once: `curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- Google Chrome (required for PNG export; the app will still run without it, but the Export button won't work)
 
 ## Quick start
 
 ```bash
 git clone https://github.com/henry-wicaksono/load-testing-formatter.git
 cd load-testing-formatter
+
+# Install dependencies & download headless Chromium
+uv sync
+uv run playwright install chromium 2>/dev/null
 
 # Launch
 make start
@@ -41,7 +44,7 @@ Open **http://localhost:8765** in your browser.
 ```
 sentry/           ← put your Sentry JSON files here
 results/          ← exported PNGs (gitignored)
-server.py         ← web server + UI (stdlib only — zero dependencies)
+server.py         ← web server + UI
 pyproject.toml
 Makefile
 ```
@@ -58,4 +61,6 @@ The app expects a JSON object with a `spans` array. Each span should include:
 
 ## Export format
 
-The `Export PNG` button serialises the table DOM with all computed styles inlined, saves it as a temporary HTML file, and renders it via headless Google Chrome (`/usr/bin/google-chrome`) into a PNG saved under `results/<tracefile>-<timestamp>.png`.
+The `Export PNG` button serialises the table DOM with all computed styles inlined and renders it via Playwright's headless Chromium into a PNG saved under `results/<tracefile>-<timestamp>.png`.
+
+> First time? Run `uv run playwright install chromium` to download the headless browser Playwright uses under the hood.

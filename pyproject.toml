@@ -3,6 +3,9 @@ name = "load-testing-formatter"
 version = "0.1.0"
 description = "Browser-based trace table viewer for Sentry JSON exports"
 requires-python = ">=3.10"
+dependencies = [
+    "playwright>=1.61.0",
+]
 
 [project.scripts]
 load-testing-formatter = "server:main"

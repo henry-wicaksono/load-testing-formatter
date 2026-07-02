@@ -4,8 +4,6 @@
 import json
 import os
 import re
-import subprocess
-import tempfile
 import urllib.parse
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -1322,30 +1320,20 @@ class Handler(BaseHTTPRequestHandler):
                 ts = datetime.now().strftime('%Y%m%dT%H%M%S')
                 SVG_DIR.mkdir(parents=True, exist_ok=True)
                 out_path = SVG_DIR / f'{stem}-{ts}.png'
-                with tempfile.NamedTemporaryFile('w', delete=False, suffix='.html', encoding='utf-8') as tmp:
-                    tmp.write(html_content)
-                    tmp_path = tmp.name
                 try:
-                    chrome = '/usr/bin/google-chrome'
-                    cmd = [
-                        chrome,
-                        '--headless',
-                        '--no-sandbox',
-                        '--disable-gpu',
-                        f'--screenshot={out_path}',
-                        f'--window-size={width},{height}',
-                        f'file://{tmp_path}',
-                    ]
-                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-                    if proc.returncode != 0:
-                        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or f'chrome exited {proc.returncode}')
-                finally:
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        pass
+                    from playwright.sync_api import sync_playwright
+                    with sync_playwright() as pw:
+                        browser = pw.chromium.launch()
+                        page = browser.new_page(
+                            viewport={'width': width, 'height': height},
+                        )
+                        page.set_content(html_content, wait_until='load')
+                        page.screenshot(path=str(out_path), full_page=True)
+                        browser.close()
+                except Exception as e:
+                    raise RuntimeError(f'playwright screenshot failed: {e}')
                 self._send_json({'ok': True, 'path': str(out_path)})
-            except (json.JSONDecodeError, OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as e:
+            except (json.JSONDecodeError, OSError, ValueError, RuntimeError) as e:
                 self._send_json({'error': str(e)}, 400)
         elif parsed.path == '/api/export-svg':
             self._send_json({'error': 'deprecated'}, 410)
