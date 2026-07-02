@@ -145,8 +145,9 @@ def filter_spans(spans):
     return [s for s in spans if s['op'] != 'POST /message http send']
 
 
-def apply_ttft_mode(spans):
-    """Cut trace at the first-token marker under ResponseSynthesizer.run.
+def apply_ttft_mode(spans, nth=1):
+    """Cut trace at the nth POST /message http send after ResponseSynthesizer.run.
+    nth is 1-indexed (1 = first send message, 2 = second, etc.).
     Returns (spans, ttft_time_or_None)."""
     # 1. Find ResponseSynthesizer.run
     rs = None
@@ -168,12 +169,15 @@ def apply_ttft_mode(spans):
 
     source_start = child['start_ts']
 
-    # 3. Find first POST /message http send that starts >= source_start
+    # 3. Find the nth POST /message http send that starts >= source_start
+    count = 0
     ttft = None
     for s in spans:
         if s['op'] == 'POST /message http send' and s['start_ts'] >= source_start:
-            ttft = s
-            break
+            count += 1
+            if count == nth:
+                ttft = s
+                break
     if not ttft:
         return spans, None
 
@@ -645,6 +649,10 @@ tr.hidden { display: none; }
       <span class="mode-opt" data-mode="ttft" onclick="setMode('ttft')">TTFT</span>
     </div>
   </div>
+  <div class="sidebar-section" id="ttft-nth-section" style="display:none">
+    <label>Send #</label>
+    <input type="number" id="ttft-nth-input" value="1" min="1" max="10" onchange="setTtftNth(this.value)">
+  </div>
   <div class="sidebar-section">
     <label>View</label>
     <div class="mode-wrap">
@@ -714,6 +722,7 @@ let TOTAL_MS = 0;
 let CURRENT_MODE = 'full';
 let CURRENT_VIEW = 'trace';
 let CURRENT_DEPTH = 3;
+let CURRENT_TTFT_NTH = 1;
 let COLOR_SPREAD = 35;
 let _saveTimer = null;
 
@@ -782,11 +791,20 @@ function applyColorStyle() {
   style.textContent = css;
 }
 
+function setTtftNth(val) {
+  CURRENT_TTFT_NTH = parseInt(val, 10) || 1;
+  document.getElementById('ttft-nth-input').value = CURRENT_TTFT_NTH;
+  if (CURRENT_MODE === 'ttft' && document.getElementById('file-picker').value) {
+    loadFile();
+  }
+}
+
 function setMode(mode) {
   CURRENT_MODE = mode;
   document.querySelectorAll('[data-mode]').forEach(function(el) {
     el.classList.toggle('active', el.dataset.mode === mode);
   });
+  document.getElementById('ttft-nth-section').style.display = mode === 'ttft' ? '' : 'none';
   if (document.getElementById('file-picker').value) {
     loadFile();
   }
@@ -846,7 +864,7 @@ async function loadFile() {
   document.getElementById('search').disabled = true;
 
   try {
-    const res = await fetch('/api/trace?file=' + encodeURIComponent(file) + '&mode=' + CURRENT_MODE);
+    const res = await fetch('/api/trace?file=' + encodeURIComponent(file) + '&mode=' + CURRENT_MODE + '&ttft_nth=' + CURRENT_TTFT_NTH);
     const data = await res.json();
 
     document.getElementById('meta-dur').textContent = fmtDur(data.duration_ms);
@@ -1370,10 +1388,11 @@ class Handler(BaseHTTPRequestHandler):
         flat = build_flat_tree(spans)
         qs = urllib.parse.parse_qs(parsed.query)
         mode = (qs.get('mode') or ['full'])[0]
+        ttft_nth = int((qs.get('ttft_nth') or ['1'])[0])
 
         ttft_time = None
         if mode == 'ttft':
-            flat, ttft_time = apply_ttft_mode(flat)
+            flat, ttft_time = apply_ttft_mode(flat, nth=ttft_nth)
 
         flat = filter_spans(flat)
         flat = group_db_spans(flat)
